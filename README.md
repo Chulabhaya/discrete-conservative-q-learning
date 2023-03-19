@@ -1,2 +1,2 @@
-# Discrete Conservative Q-Learning
-Discrete Conservative Q-Learning implementation for offline RL.
+# Recurrent Discrete Conservative Q-Learning
+Recurrent discrete conservative q-learning implementation for offline RL.
