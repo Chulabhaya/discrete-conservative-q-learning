@@ -3,6 +3,7 @@ import os
 import random
 import time
 from distutils.util import strtobool
+import pickle
 
 import gymnasium as gym
 import numpy as np
@@ -37,7 +38,7 @@ def parse_args():
     # Algorithm specific arguments
     parser.add_argument("--env-id", type=str, default="CartPole-v0",
         help="the id of the environment")
-    parser.add_argument("--total-timesteps", type=int, default=200500,
+    parser.add_argument("--total-timesteps", type=int, default=100500,
         help="total timesteps of the experiments")
     parser.add_argument("--buffer-size", type=int, default=int(1e5),
         help="the replay memory buffer size")
@@ -56,7 +57,7 @@ def parse_args():
     parser.add_argument("--policy-frequency", type=int, default=2,
         help="the frequency of training policy (delayed)")
     parser.add_argument("--target-network-frequency", type=int, default=1, # Denis Yarats' implementation delays this by 2.
-        help="the frequency of updates for the target nerworks")
+        help="the frequency of updates for the target networks")
     parser.add_argument("--alpha", type=float, default=0.2,
             help="Entropy regularization coefficient.")
     parser.add_argument("--autotune", type=lambda x:bool(strtobool(x)), default=True, nargs="?", const=True,
@@ -65,10 +66,18 @@ def parse_args():
     # CQL specific arguments
     parser.add_argument("--cql_alpha", type=float, default=1.0,
             help="CQL regularizer scaling coefficient.")
-    parser.add_argument("--cql_autotune", type=lambda x:bool(strtobool(x)), default=True, nargs="?", const=True,
+    parser.add_argument("--cql_autotune", type=lambda x:bool(strtobool(x)), default=False, nargs="?", const=True,
         help="automatic tuning of the CQL regularizer coefficient")
-    parser.add_argument("--difference-threshold", type=float, default=10.0,
+    parser.add_argument("--difference-threshold", type=float, default=5,
             help="Threshold used for automatic tuning of CQL regularizer coefficient")
+
+    # Offline training specific arguments
+    parser.add_argument("--dataset-path", type=str, default="cartpole_expert.pkl",
+        help="path to dataset for training")
+    parser.add_argument("--num-evals", type=int, default=10,
+        help="number of evaluation episodes to generate per evaluation during training")
+    parser.add_argument("--eval-freq", type=int, default=1000,
+        help="timestep frequency at which to run evaluation")
 
     # Checkpointing specific arguments
     parser.add_argument("--save", type=lambda x:bool(strtobool(x)), default=True, nargs="?", const=True,
@@ -79,7 +88,7 @@ def parse_args():
         help="how often to save checkpoints during training (in timesteps)")
     parser.add_argument("--resume", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
         help="whether to resume training from a checkpoint")
-    parser.add_argument("--resume-checkpoint-path", type=str, default=None,
+    parser.add_argument("--resume-checkpoint-path", type=str, default="./trained_models/CartPole-v0__cql_sac_discrete_action_offline__1__1679358697__xgtu5aa7/global_step_95000.pth",
         help="path to checkpoint to resume training from")
     parser.add_argument("--run-id", type=str, default=None,
         help="wandb unique run id for resuming")
@@ -87,6 +96,63 @@ def parse_args():
     args = parser.parse_args()
     # fmt: on
     return args
+
+
+def eval_policy(
+    actor,
+    env_name,
+    seed,
+    seed_offset,
+    global_step,
+    capture_video,
+    run_name,
+    num_evals,
+    data_log,
+):
+    # Put actor model in evaluation mode
+    actor.eval()
+
+    with torch.no_grad():
+        # Initialization
+        run_name_full = run_name + "__eval__" + str(global_step)
+        env = make_env(
+            env_name,
+            seed + seed_offset,
+            capture_video,
+            run_name_full,
+        )
+        # Track averages
+        avg_episodic_return = 0
+        avg_episodic_length = 0
+        # Start evaluation
+        obs, info = env.reset(seed=seed + seed_offset)
+        for _ in range(num_evals):
+            terminated, truncated = False, False
+            while not (truncated or terminated):
+                # Get action
+                action, _, _ = actor.get_action(torch.Tensor(obs).to(device))
+                action = action.detach().cpu().numpy()
+
+                # Take step in environment
+                next_obs, reward, terminated, truncated, info = env.step(action)
+
+                # Update next obs
+                obs = next_obs
+            avg_episodic_return += info["episode"]["r"][0]
+            avg_episodic_length += info["episode"]["l"][0]
+            obs, info = env.reset()
+        # Update averages
+        avg_episodic_return /= num_evals
+        avg_episodic_length /= num_evals
+        print(
+            f"global_step={global_step}, episodic_return={avg_episodic_return}, episodic_length={avg_episodic_length}",
+            flush=True,
+        )
+        data_log["misc/episodic_return"] = avg_episodic_return
+        data_log["misc/episodic_length"] = avg_episodic_length
+
+    # Put actor model back in training mode
+    actor.train()
 
 
 if __name__ == "__main__":
@@ -164,10 +230,29 @@ if __name__ == "__main__":
     )
     actor_optimizer = optim.Adam(list(actor.parameters()), lr=args.policy_lr)
 
+    # If resuming training, load models and optimizers
+    if args.resume:
+        actor.load_state_dict(checkpoint["model_state_dict"]["actor_state_dict"])
+        qf1.load_state_dict(checkpoint["model_state_dict"]["qf1_state_dict"])
+        qf2.load_state_dict(checkpoint["model_state_dict"]["qf2_state_dict"])
+        qf1_target.load_state_dict(
+            checkpoint["model_state_dict"]["qf1_target_state_dict"]
+        )
+        qf2_target.load_state_dict(
+            checkpoint["model_state_dict"]["qf2_target_state_dict"]
+        )
+        q_optimizer.load_state_dict(checkpoint["optimizer_state_dict"]["q_optimizer"])
+        actor_optimizer.load_state_dict(
+            checkpoint["optimizer_state_dict"]["actor_optimizer"]
+        )
+
     # Automatic entropy tuning
     if args.autotune:
         target_entropy = -0.3 * torch.log(1 / torch.tensor(env.action_space.n))
-        log_alpha = torch.zeros(1, requires_grad=True, device=device)
+        if args.resume:
+            log_alpha = checkpoint["model_state_dict"]["log_alpha"]
+        else:
+            log_alpha = torch.zeros(1, requires_grad=True, device=device)
         a_optimizer = optim.Adam([log_alpha], lr=args.q_lr, eps=1e-4)
         # If resuming, load optimizer
         if args.resume:
@@ -181,7 +266,10 @@ if __name__ == "__main__":
 
     # Automatic CQL regularizer coefficient tuning
     if args.cql_autotune:
-        cql_log_alpha = torch.zeros(1, requires_grad=True, device=device)
+        if args.resume:
+            cql_log_alpha = checkpoint["model_state_dict"]["cql_log_alpha"]
+        else:
+            cql_log_alpha = torch.zeros(1, requires_grad=True, device=device)
         cql_a_optimizer = optim.Adam([cql_log_alpha], lr=args.q_lr, eps=1e-4)
         # If resuming, load optimizer
         if args.resume:
@@ -189,7 +277,10 @@ if __name__ == "__main__":
                 checkpoint["optimizer_state_dict"]["cql_a_optimizer"]
             )
     else:
-        cql_alpha = args.cql_alpha
+        cql_alpha = torch.tensor(args.cql_alpha)
+
+    # Load dataset
+    dataset = pickle.load(open(args.dataset_path, "rb"))
 
     # Initialize replay buffer
     env.observation_space.dtype = np.float32
@@ -199,6 +290,8 @@ if __name__ == "__main__":
         env.action_space,
         device,
     )
+    rb.load_buffer(dataset)
+
     # If resuming training, then load previous replay buffer
     if args.resume:
         rb_data = checkpoint["replay_buffer"]
@@ -227,199 +320,176 @@ if __name__ == "__main__":
         # Store values for data logging for each global step
         data_log = {}
 
-        # ALGO LOGIC: put action logic here
-        if global_step < args.learning_starts:
-            action = env.action_space.sample()
+        # sample data from replay buffer
+        observations, actions, next_observations, rewards, terminateds = rb.sample(
+            args.batch_size
+        )
+        # ---------- update critic ---------- #
+        # no grad because target networks are updated separately (pg. 6 of
+        # updated SAC paper)
+        with torch.no_grad():
+            _, next_state_action_probs, next_state_log_pis = actor.get_action(
+                next_observations
+            )
+            # two Q-value estimates for reducing overestimation bias (pg. 8 of updated SAC paper)
+            qf1_next_target = qf1_target(next_observations)
+            qf2_next_target = qf2_target(next_observations)
+            min_qf_next_target = torch.min(qf1_next_target, qf2_next_target)
+            # calculate eq. 3 in updated SAC paper
+            qf_next_target = next_state_action_probs * (
+                min_qf_next_target - alpha * next_state_log_pis
+            )
+            # calculate eq. 2 in updated SAC paper
+            next_q_value = rewards + (
+                (1 - terminateds) * args.gamma * qf_next_target.sum(dim=1).unsqueeze(-1)
+            )
+
+        # calculate eq. 5 in updated SAC paper
+        qf1_values = qf1(observations)
+        qf2_values = qf2(observations)
+        qf1_a_values = qf1_values.gather(1, actions)
+        qf2_a_values = qf2_values.gather(1, actions)
+        qf1_loss = F.mse_loss(qf1_a_values, next_q_value)
+        qf2_loss = F.mse_loss(qf2_a_values, next_q_value)
+        qf_loss = 0.5 * (qf1_loss + qf2_loss)  # scaling added from CQL
+
+        # calculate CQL regularization loss
+        if args.cql_autotune:
+            cql_alpha = torch.clamp(
+                cql_log_alpha.exp().detach(), min=0.0, max=1000000.0
+            )
+            cql_qf1_loss = (
+                torch.logsumexp(qf1_values, dim=1).mean() - qf1_a_values.mean()
+            )
+            cql_qf2_loss = (
+                torch.logsumexp(qf2_values, dim=1).mean() - qf2_a_values.mean()
+            )
+            cql_qf1_loss = cql_alpha * (cql_qf1_loss - args.difference_threshold)
+            cql_qf2_loss = cql_alpha * (cql_qf2_loss - args.difference_threshold)
         else:
-            action, _, _ = actor.get_action(torch.Tensor(obs).to(device))
-            action = action.detach().cpu().numpy()
-
-        # Take step in environment
-        next_obs, reward, terminated, truncated, info = env.step(action)
-
-        # Save data to replay buffer
-        rb.add(obs, action, next_obs, reward, terminated, truncated)
-
-        # Update next obs
-        obs = next_obs
-
-        # Handle episode end, record rewards for plotting purposes
-        if terminated or truncated:
-            print(
-                f"global_step={global_step}, episodic_return={info['episode']['r'][0]}, episodic_length={info['episode']['l'][0]}",
-                flush=True,
+            cql_qf1_loss = cql_alpha * (
+                torch.logsumexp(qf1_values, dim=1).mean() - qf1_a_values.mean()
             )
-            data_log["misc/episodic_return"] = info["episode"]["r"][0]
-            data_log["misc/episodic_length"] = info["episode"]["l"][0]
-
-            obs, info = env.reset()
-
-        # ALGO LOGIC: training.
-        if global_step > args.learning_starts:
-            # sample data from replay buffer
-            observations, actions, next_observations, rewards, terminateds = rb.sample(
-                args.batch_size
+            cql_qf2_loss = cql_alpha * (
+                torch.logsumexp(qf2_values, dim=1).mean() - qf2_a_values.mean()
             )
-            # ---------- update critic ---------- #
-            # no grad because target networks are updated separately (pg. 6 of
-            # updated SAC paper)
+
+        # calculate final q-function loss which is a combination of Bellman error and CQL regularization
+        cql_qf_loss = cql_qf1_loss + cql_qf2_loss
+        qf_loss = cql_qf_loss + qf_loss
+
+        # calculate eq. 6 in updated SAC paper
+        q_optimizer.zero_grad()
+        qf_loss.backward()
+        q_optimizer.step()
+
+        # ---------- update cql_alpha ---------- #
+        if args.cql_autotune:
             with torch.no_grad():
-                _, next_state_action_probs, next_state_log_pis = actor.get_action(
-                    next_observations
-                )
-                # two Q-value estimates for reducing overestimation bias (pg. 8 of updated SAC paper)
-                qf1_next_target = qf1_target(next_observations)
-                qf2_next_target = qf2_target(next_observations)
-                min_qf_next_target = torch.min(qf1_next_target, qf2_next_target)
-                # calculate eq. 3 in updated SAC paper
-                qf_next_target = next_state_action_probs * (
-                    min_qf_next_target - alpha * next_state_log_pis
-                )
-                # calculate eq. 2 in updated SAC paper
-                next_q_value = rewards + (
-                    (1 - terminateds)
-                    * args.gamma
-                    * qf_next_target.sum(dim=1).unsqueeze(-1)
+                cql_qf1_diff_loss = cql_qf1_loss - args.difference_threshold
+                cql_qf2_diff_loss = cql_qf2_loss - args.difference_threshold
+
+            cql_alpha = torch.clamp(cql_log_alpha.exp(), min=0.0, max=1000000.0)
+            cql_alpha_loss = cql_alpha * -(cql_qf1_diff_loss + cql_qf2_diff_loss)
+
+            cql_a_optimizer.zero_grad()
+            cql_alpha_loss.backward()
+            cql_a_optimizer.step()
+
+        # ---------- update actor ---------- #
+        if global_step % args.policy_frequency == 0:  # TD 3 Delayed update support
+            for _ in range(
+                args.policy_frequency
+            ):  # compensate for the delay by doing 'actor_update_interval' instead of 1
+                _, state_action_probs, state_action_log_pis = actor.get_action(
+                    observations
                 )
 
-            # calculate eq. 5 in updated SAC paper
-            qf1_values = qf1(observations)
-            qf2_values = qf2(observations)
-            qf1_a_values = qf1_values.gather(1, actions)
-            qf2_a_values = qf2_values.gather(1, actions)
-            qf1_loss = F.mse_loss(qf1_a_values, next_q_value)
-            qf2_loss = F.mse_loss(qf2_a_values, next_q_value)
-            qf_loss = 0.5 * (qf1_loss + qf2_loss)  # scaling added from CQL
-
-            # calculate CQL regularization loss
-            if args.cql_autotune:
-                cql_alpha = torch.clamp(
-                    cql_log_alpha.exp().detach(), min=0.0, max=1000000.0
-                )
-                cql_qf1_loss = (
-                    torch.logsumexp(qf1_values, dim=1).mean() - qf1_a_values.mean()
-                )
-                cql_qf2_loss = (
-                    torch.logsumexp(qf2_values, dim=1).mean() - qf2_a_values.mean()
-                )
-                cql_qf1_loss = cql_alpha * (cql_qf1_loss - args.difference_threshold)
-                cql_qf2_loss = cql_alpha * (cql_qf2_loss - args.difference_threshold)
-            else:
-                cql_qf1_loss = cql_alpha * (
-                    torch.logsumexp(qf1_values, dim=1).mean() - qf1_a_values.mean()
-                )
-                cql_qf2_loss = cql_alpha * (
-                    torch.logsumexp(qf2_values, dim=1).mean() - qf2_a_values.mean()
-                )
-
-            # calculate final q-function loss which is a combination of Bellman error and CQL regularization
-            cql_qf_loss = cql_qf1_loss + cql_qf2_loss
-            qf_loss = cql_qf_loss + qf_loss
-
-            # calculate eq. 6 in updated SAC paper
-            q_optimizer.zero_grad()
-            qf_loss.backward()
-            q_optimizer.step()
-
-            # ---------- update cql_alpha ---------- #
-            if args.cql_autotune:
+                # no grad because q-networks are updated separately
                 with torch.no_grad():
-                    cql_qf1_diff_loss = cql_qf1_loss - args.difference_threshold
-                    cql_qf2_diff_loss = cql_qf2_loss - args.difference_threshold
+                    qf1_pi = qf1(observations)
+                    qf2_pi = qf2(observations)
+                    min_qf_pi = torch.min(qf1_pi, qf2_pi)
 
-                cql_alpha = torch.clamp(cql_log_alpha.exp(), min=0.0, max=1000000.0)
-                cql_alpha_loss = cql_alpha * -(cql_qf1_diff_loss + cql_qf2_diff_loss)
-
-                cql_a_optimizer.zero_grad()
-                cql_alpha_loss.backward()
-                cql_a_optimizer.step()
-
-            # ---------- update actor ---------- #
-            if global_step % args.policy_frequency == 0:  # TD 3 Delayed update support
-                for _ in range(
-                    args.policy_frequency
-                ):  # compensate for the delay by doing 'actor_update_interval' instead of 1
-                    _, state_action_probs, state_action_log_pis = actor.get_action(
-                        observations
-                    )
-
-                    # no grad because q-networks are updated separately
-                    with torch.no_grad():
-                        qf1_pi = qf1(observations)
-                        qf2_pi = qf2(observations)
-                        min_qf_pi = torch.min(qf1_pi, qf2_pi)
-
-                    # calculate eq. 7 in updated SAC paper
-                    actor_loss = (
-                        (
-                            state_action_probs
-                            * ((alpha * state_action_log_pis) - min_qf_pi)
-                        )
-                        .sum(1)
-                        .mean()
-                    )
-
-                    # calculate eq. 9 in updated SAC paper
-                    actor_optimizer.zero_grad()
-                    actor_loss.backward()
-                    actor_optimizer.step()
-
-                    # ---------- update alpha ---------- #
-                    if args.autotune:
-                        # no grad because actor network is updated separately
-                        with torch.no_grad():
-                            (
-                                _,
-                                state_action_probs,
-                                state_action_log_pis,
-                            ) = actor.get_action(observations)
-                        # calculate eq. 18 in updated SAC paper
-                        alpha_loss = state_action_probs * (
-                            -log_alpha * (state_action_log_pis + target_entropy)
-                        )
-                        alpha_loss = torch.sum(alpha_loss, dim=1).mean()
-
-                        # calculate gradient of eq. 18
-                        a_optimizer.zero_grad()
-                        alpha_loss.backward()
-                        a_optimizer.step()
-                        alpha = log_alpha.exp().item()
-
-            # update the target networks
-            if global_step % args.target_network_frequency == 0:
-                for param, target_param in zip(
-                    qf1.parameters(), qf1_target.parameters()
-                ):
-                    target_param.data.copy_(
-                        args.tau * param.data + (1 - args.tau) * target_param.data
-                    )  # "update target network weights" line in page 8, algorithm 1,
-                    # in updated SAC paper
-                for param, target_param in zip(
-                    qf2.parameters(), qf2_target.parameters()
-                ):
-                    target_param.data.copy_(
-                        args.tau * param.data + (1 - args.tau) * target_param.data
-                    )
-
-            if global_step % 100 == 0:
-                data_log["losses/qf1_values"] = qf1_a_values.mean().item()
-                data_log["losses/qf2_values"] = qf2_a_values.mean().item()
-                data_log["losses/qf1_loss"] = qf1_loss.item()
-                data_log["losses/qf2_loss"] = qf2_loss.item()
-                data_log["losses/cql_qf1_loss"] = cql_qf1_loss.item()
-                data_log["losses/cql_qf2_loss"] = cql_qf2_loss.item()
-                data_log["losses/qf_loss"] = qf_loss.item()
-                data_log["losses/cql_qf_loss"] = cql_qf_loss.item()
-                data_log["losses/actor_loss"] = actor_loss.item()
-                data_log["losses/alpha"] = alpha
-                data_log["losses/cql_alpha"] = cql_alpha.item()
-                data_log["misc/steps_per_second"] = int(
-                    global_step / (time.time() - start_time)
+                # calculate eq. 7 in updated SAC paper
+                actor_loss = (
+                    (state_action_probs * ((alpha * state_action_log_pis) - min_qf_pi))
+                    .sum(1)
+                    .mean()
                 )
-                print("SPS:", int(global_step / (time.time() - start_time)), flush=True)
+
+                # calculate eq. 9 in updated SAC paper
+                actor_optimizer.zero_grad()
+                actor_loss.backward()
+                actor_optimizer.step()
+
+                # ---------- update alpha ---------- #
                 if args.autotune:
-                    data_log["losses/alpha_loss"] = alpha_loss.item()
-                    data_log["losses/cql_alpha_loss"] = cql_alpha_loss.item()
+                    # no grad because actor network is updated separately
+                    with torch.no_grad():
+                        (
+                            _,
+                            state_action_probs,
+                            state_action_log_pis,
+                        ) = actor.get_action(observations)
+                    # calculate eq. 18 in updated SAC paper
+                    alpha_loss = state_action_probs * (
+                        -log_alpha * (state_action_log_pis + target_entropy)
+                    )
+                    alpha_loss = torch.sum(alpha_loss, dim=1).mean()
+
+                    # calculate gradient of eq. 18
+                    a_optimizer.zero_grad()
+                    alpha_loss.backward()
+                    a_optimizer.step()
+                    alpha = log_alpha.exp().item()
+
+        # update the target networks
+        if global_step % args.target_network_frequency == 0:
+            for param, target_param in zip(qf1.parameters(), qf1_target.parameters()):
+                target_param.data.copy_(
+                    args.tau * param.data + (1 - args.tau) * target_param.data
+                )  # "update target network weights" line in page 8, algorithm 1,
+                # in updated SAC paper
+            for param, target_param in zip(qf2.parameters(), qf2_target.parameters()):
+                target_param.data.copy_(
+                    args.tau * param.data + (1 - args.tau) * target_param.data
+                )
+
+        if global_step % 100 == 0:
+            data_log["losses/qf1_values"] = qf1_a_values.mean().item()
+            data_log["losses/qf2_values"] = qf2_a_values.mean().item()
+            data_log["losses/qf1_loss"] = qf1_loss.item()
+            data_log["losses/qf2_loss"] = qf2_loss.item()
+            data_log["losses/cql_qf1_loss"] = cql_qf1_loss.item()
+            data_log["losses/cql_qf2_loss"] = cql_qf2_loss.item()
+            data_log["losses/qf_loss"] = qf_loss.item()
+            data_log["losses/cql_qf_loss"] = cql_qf_loss.item()
+            data_log["losses/actor_loss"] = actor_loss.item()
+            data_log["losses/alpha"] = alpha
+            data_log["losses/cql_alpha"] = cql_alpha.item()
+            data_log["misc/steps_per_second"] = int(
+                global_step / (time.time() - start_time)
+            )
+            print("SPS:", int(global_step / (time.time() - start_time)), flush=True)
+            if args.autotune:
+                data_log["losses/alpha_loss"] = alpha_loss.item()
+            if args.cql_autotune:
+                data_log["losses/cql_alpha_loss"] = cql_alpha_loss.item()
+
+        # Evaluate trained policy
+        if (global_step + 1) % args.eval_freq == 0 or global_step == 0:
+            eval_policy(
+                actor,
+                args.env_id,
+                args.seed,
+                10000,
+                global_step,
+                args.capture_video,
+                run_name,
+                args.num_evals,
+                data_log,
+            )
 
         data_log["misc/global_step"] = global_step
         wandb.log(data_log, step=global_step)
@@ -442,6 +512,10 @@ if __name__ == "__main__":
                 }
                 if args.autotune:
                     optimizers["a_optimizer"] = a_optimizer.state_dict()
+                    models["log_alpha"] = log_alpha
+                if args.cql_autotune:
+                    optimizers["cql_a_optimizer"] = cql_a_optimizer.state_dict()
+                    models["cql_log_alpha"] = cql_log_alpha
                 # Save replay buffer
                 rb_data = rb.save_buffer()
                 # Save random states, important for reproducibility
