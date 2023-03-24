@@ -66,9 +66,9 @@ def parse_args():
         help="automatic tuning of the entropy coefficient")
 
     # CQL specific arguments
-    parser.add_argument("--cql_alpha", type=float, default=1.0,
+    parser.add_argument("--cql-alpha", type=float, default=1.0,
             help="CQL regularizer scaling coefficient.")
-    parser.add_argument("--cql_autotune", type=lambda x:bool(strtobool(x)), default=False, nargs="?", const=True,
+    parser.add_argument("--cql-autotune", type=lambda x:bool(strtobool(x)), default=False, nargs="?", const=True,
         help="automatic tuning of the CQL regularizer coefficient")
     parser.add_argument("--difference-threshold", type=float, default=5,
             help="Threshold used for automatic tuning of CQL regularizer coefficient")
