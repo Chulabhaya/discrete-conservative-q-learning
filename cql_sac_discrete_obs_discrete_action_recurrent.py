@@ -106,6 +106,7 @@ def parse_args():
 def eval_policy(
     actor,
     env_name,
+    maximum_episode_length,
     seed,
     seed_offset,
     global_step,
@@ -125,6 +126,7 @@ def eval_policy(
             seed + seed_offset,
             capture_video,
             run_name_full,
+            max_episode_len=maximum_episode_length
         )
         # Track averages
         avg_episodic_return = 0
@@ -532,6 +534,7 @@ if __name__ == "__main__":
             eval_policy(
                 actor,
                 args.env_id,
+                args.maximum_episode_length,
                 args.seed,
                 10000,
                 global_step,
