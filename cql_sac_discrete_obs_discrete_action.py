@@ -70,7 +70,7 @@ def parse_args():
             help="CQL regularizer scaling coefficient.")
     parser.add_argument("--cql-autotune", type=lambda x:bool(strtobool(x)), default=False, nargs="?", const=True,
         help="automatic tuning of the CQL regularizer coefficient")
-    parser.add_argument("--difference-threshold", type=float, default=5,
+    parser.add_argument("--difference-threshold", type=float, default=10,
             help="Threshold used for automatic tuning of CQL regularizer coefficient")
 
     # Offline training specific arguments
@@ -123,7 +123,7 @@ def eval_policy(
             seed + seed_offset,
             capture_video,
             run_name_full,
-            max_episode_len=maximum_episode_length
+            max_episode_len=maximum_episode_length,
         )
         # Track averages
         avg_episodic_return = 0
@@ -366,25 +366,21 @@ if __name__ == "__main__":
         qf_loss = 0.5 * (qf1_loss + qf2_loss)  # scaling added from CQL
 
         # calculate CQL regularization loss
+        cql_qf1_diff = torch.logsumexp(qf1_values, dim=1).mean() - qf1_a_values.mean()
+        cql_qf2_diff = torch.logsumexp(qf2_values, dim=1).mean() - qf2_a_values.mean()
         if args.cql_autotune:
-            cql_alpha = torch.clamp(
-                cql_log_alpha.exp().detach(), min=0.0, max=1000000.0
-            )
-            cql_qf1_loss = (
-                torch.logsumexp(qf1_values, dim=1).mean() - qf1_a_values.mean()
-            )
-            cql_qf2_loss = (
-                torch.logsumexp(qf2_values, dim=1).mean() - qf2_a_values.mean()
-            )
-            cql_qf1_loss = cql_alpha * (cql_qf1_loss - args.difference_threshold)
-            cql_qf2_loss = cql_alpha * (cql_qf2_loss - args.difference_threshold)
+            cql_alpha = torch.clamp(torch.exp(cql_log_alpha), min=0.0, max=1000000.0)
+            cql_qf1_loss = cql_alpha * (cql_qf1_diff - args.difference_threshold)
+            cql_qf2_loss = cql_alpha * (cql_qf2_diff - args.difference_threshold)
+            cql_alpha_loss = -(cql_qf1_loss + cql_qf2_loss)
+
+            # ---------- update cql_alpha ---------- #
+            cql_a_optimizer.zero_grad()
+            cql_alpha_loss.backward(retain_graph=True)
+            cql_a_optimizer.step()
         else:
-            cql_qf1_loss = cql_alpha * (
-                torch.logsumexp(qf1_values, dim=1).mean() - qf1_a_values.mean()
-            )
-            cql_qf2_loss = cql_alpha * (
-                torch.logsumexp(qf2_values, dim=1).mean() - qf2_a_values.mean()
-            )
+            cql_qf1_loss = cql_alpha * cql_qf1_diff
+            cql_qf2_loss = cql_alpha * cql_qf2_diff
 
         # calculate final q-function loss which is a combination of Bellman error and CQL regularization
         cql_qf_loss = cql_qf1_loss + cql_qf2_loss
@@ -394,19 +390,6 @@ if __name__ == "__main__":
         q_optimizer.zero_grad()
         qf_loss.backward()
         q_optimizer.step()
-
-        # ---------- update cql_alpha ---------- #
-        if args.cql_autotune:
-            with torch.no_grad():
-                cql_qf1_diff_loss = cql_qf1_loss - args.difference_threshold
-                cql_qf2_diff_loss = cql_qf2_loss - args.difference_threshold
-
-            cql_alpha = torch.clamp(cql_log_alpha.exp(), min=0.0, max=1000000.0)
-            cql_alpha_loss = cql_alpha * -(cql_qf1_diff_loss + cql_qf2_diff_loss)
-
-            cql_a_optimizer.zero_grad()
-            cql_alpha_loss.backward()
-            cql_a_optimizer.step()
 
         # ---------- update actor ---------- #
         if global_step % args.policy_frequency == 0:  # TD 3 Delayed update support
