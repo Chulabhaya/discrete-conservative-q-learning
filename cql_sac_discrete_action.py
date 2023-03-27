@@ -50,9 +50,9 @@ def parse_args():
         help="the batch size of sample from the reply memory")
     parser.add_argument("--learning-starts", type=int, default=5e3,
         help="timestep to start learning")
-    parser.add_argument("--policy-lr", type=float, default=3e-4,
+    parser.add_argument("--policy-lr", type=float, default=3e-5,
         help="the learning rate of the policy network optimizer")
-    parser.add_argument("--q-lr", type=float, default=1e-3,
+    parser.add_argument("--q-lr", type=float, default=3e-4,
         help="the learning rate of the Q network network optimizer")
     parser.add_argument("--policy-frequency", type=int, default=2,
         help="the frequency of training policy (delayed)")
@@ -72,7 +72,7 @@ def parse_args():
             help="Threshold used for automatic tuning of CQL regularizer coefficient")
 
     # Offline training specific arguments
-    parser.add_argument("--dataset-path", type=str, default="cartpole_expert.pkl",
+    parser.add_argument("--dataset-path", type=str, default="/home/chulabhaya/phd/research/data/cartpole_v0/3-27-23_cartpole_v0_sac_expert_policy_expert_data.pkl",
         help="path to dataset for training")
     parser.add_argument("--num-evals", type=int, default=10,
         help="number of evaluation episodes to generate per evaluation during training")
@@ -446,6 +446,8 @@ if __name__ == "__main__":
             data_log["losses/qf2_loss"] = qf2_loss.item()
             data_log["losses/cql_qf1_loss"] = cql_qf1_loss.item()
             data_log["losses/cql_qf2_loss"] = cql_qf2_loss.item()
+            data_log["losses/cql_qf1_diff"] = cql_qf1_diff.item()
+            data_log["losses/cql_qf2_diff"] = cql_qf2_diff.item()
             data_log["losses/qf_loss"] = qf_loss.item()
             data_log["losses/cql_qf_loss"] = cql_qf_loss.item()
             data_log["losses/actor_loss"] = actor_loss.item()

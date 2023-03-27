@@ -55,9 +55,9 @@ def parse_args():
         help="the batch size of sample from the reply memory")
     parser.add_argument("--learning-starts", type=int, default=5e3,
         help="timestep to start learning")
-    parser.add_argument("--policy-lr", type=float, default=3e-4,
+    parser.add_argument("--policy-lr", type=float, default=3e-5,
         help="the learning rate of the policy network optimizer")
-    parser.add_argument("--q-lr", type=float, default=1e-3,
+    parser.add_argument("--q-lr", type=float, default=3e-4,
         help="the learning rate of the Q network network optimizer")
     parser.add_argument("--policy-frequency", type=int, default=2,
         help="the frequency of training policy (delayed)")
@@ -500,6 +500,8 @@ if __name__ == "__main__":
             data_log["losses/qf2_loss"] = qf2_loss.item()
             data_log["losses/cql_qf1_loss"] = cql_qf1_loss.item()
             data_log["losses/cql_qf2_loss"] = cql_qf2_loss.item()
+            data_log["losses/cql_qf1_diff"] = cql_qf1_diff.item()
+            data_log["losses/cql_qf2_diff"] = cql_qf2_diff.item()
             data_log["losses/qf_loss"] = qf_loss.item()
             data_log["losses/cql_qf_loss"] = cql_qf_loss.item()
             data_log["losses/actor_loss"] = actor_loss.item()
