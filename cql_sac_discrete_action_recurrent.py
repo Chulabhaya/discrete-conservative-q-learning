@@ -381,16 +381,22 @@ if __name__ == "__main__":
         qf_loss = 0.5 * (qf1_loss + qf2_loss)  # scaling added from CQL
 
         # calculate CQL regularization loss
-        actor_loss_mask = torch.repeat_interleave(q_loss_mask, env.action_space.n, 2)
-        actor_loss_mask_nonzero_elements = torch.sum(actor_loss_mask)
-        cql_qf1_diff = (
-            torch.logsumexp(qf1_values * actor_loss_mask, dim=1).mean()
-            - qf1_a_values.mean()
+        qf1_policy_action_value = (
+            torch.sum(torch.logsumexp(qf1_values, dim=2, keepdim=True) * q_loss_mask)
+            / q_loss_mask_nonzero_elements
         )
-        cql_qf2_diff = (
-            torch.logsumexp(qf2_values * actor_loss_mask, dim=1).mean()
-            - qf2_a_values.mean()
+        qf1_data_action_value = (
+            torch.sum(qf1_a_values * q_loss_mask) / q_loss_mask_nonzero_elements
         )
+        cql_qf1_diff = qf1_policy_action_value - qf1_data_action_value
+        qf2_policy_action_value = (
+            torch.sum(torch.logsumexp(qf2_values, dim=2, keepdim=True) * q_loss_mask)
+            / q_loss_mask_nonzero_elements
+        )
+        qf2_data_action_value = (
+            torch.sum(qf2_a_values * q_loss_mask) / q_loss_mask_nonzero_elements
+        )
+        cql_qf2_diff = qf2_policy_action_value - qf2_data_action_value
         if args.cql_autotune:
             cql_alpha = torch.clamp(torch.exp(cql_log_alpha), min=0.0, max=1000000.0)
             cql_qf1_loss = cql_alpha * (cql_qf1_diff - args.difference_threshold)
@@ -430,6 +436,10 @@ if __name__ == "__main__":
                     min_qf_pi = torch.min(qf1_pi, qf2_pi)
 
                 # calculate eq. 7 in updated SAC paper
+                actor_loss_mask = torch.repeat_interleave(
+                    q_loss_mask, env.action_space.n, 2
+                )
+                actor_loss_mask_nonzero_elements = torch.sum(actor_loss_mask)
                 actor_loss = state_action_probs * (
                     (alpha * state_action_log_pis) - min_qf_pi
                 )
