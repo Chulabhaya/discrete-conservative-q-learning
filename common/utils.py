@@ -51,9 +51,7 @@ def save(
     replay_buffer,
     rng_states,
 ):
-    import os
-
-    save_dir = checkpoint_dir + run_name + "__" + run_id + "/"
+    save_dir = checkpoint_dir + run_id + "/"
 
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
