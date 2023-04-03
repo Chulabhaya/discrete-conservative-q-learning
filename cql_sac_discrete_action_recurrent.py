@@ -70,7 +70,7 @@ def parse_args():
             help="CQL regularizer scaling coefficient.")
     parser.add_argument("--cql-autotune", type=lambda x:bool(strtobool(x)), default=True, nargs="?", const=True,
         help="automatic tuning of the CQL regularizer coefficient")
-    parser.add_argument("--difference-threshold", type=float, default=10.0,
+    parser.add_argument("--cql-tau", type=float, default=10.0,
             help="Threshold used for automatic tuning of CQL regularizer coefficient")
 
     # Offline training specific arguments
@@ -395,8 +395,8 @@ if __name__ == "__main__":
         cql_qf2_diff = qf2_policy_action_value - qf2_data_action_value
         if args.cql_autotune:
             cql_alpha = torch.clamp(torch.exp(cql_log_alpha), min=0.0, max=1000000.0)
-            cql_qf1_loss = cql_alpha * (cql_qf1_diff - args.difference_threshold)
-            cql_qf2_loss = cql_alpha * (cql_qf2_diff - args.difference_threshold)
+            cql_qf1_loss = cql_alpha * (cql_qf1_diff - args.cql_tau)
+            cql_qf2_loss = cql_alpha * (cql_qf2_diff - args.cql_tau)
             cql_alpha_loss = -(cql_qf1_loss + cql_qf2_loss)
 
             # ---------- update cql_alpha ---------- #
