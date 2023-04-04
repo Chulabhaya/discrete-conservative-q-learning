@@ -42,7 +42,6 @@ def make_env(env_id, seed, capture_video, run_name, max_episode_len=None):
 
 
 def save(
-    run_name,
     run_id,
     checkpoint_dir,
     global_step,
@@ -55,6 +54,9 @@ def save(
 
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
+        # Prevent permission issues when writing to this directory
+        # after resuming a training job
+        os.chmod(save_dir, 0o777)
 
     save_path = save_dir + "global_step_" + str(global_step) + ".pth"
     torch.save(
