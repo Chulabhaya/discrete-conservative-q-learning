@@ -27,7 +27,7 @@ def collect_trained_policy_data(env, actor, device, seed, total_timesteps):
     global_step = 0
     for global_step in range(0, total_timesteps):
         # Get action from scripted policy
-        action, _, _ = actor.get_action(torch.Tensor(obs).to(device))
+        action, _, _ = actor.get_actions(torch.Tensor(obs).to(device))
         action = action.detach().cpu().numpy()
 
         # Take action in environment
