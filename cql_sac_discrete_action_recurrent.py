@@ -70,7 +70,7 @@ def parse_args():
             help="Threshold used for automatic tuning of CQL regularizer coefficient")
 
     # Offline training specific arguments
-    parser.add_argument("--dataset-path", type=str, default="cartpole_expert.pkl",
+    parser.add_argument("--dataset-path", type=str, default="4-8-23_cartpole_v0_pomdp_sac_expert_policy_0_percent_random_data.pkl",
         help="path to dataset for training")
     parser.add_argument("--num-evals", type=int, default=10,
         help="number of evaluation episodes to generate per evaluation during training")
@@ -519,7 +519,6 @@ if __name__ == "__main__":
             eval_policy(
                 actor,
                 args.env_id,
-                args.maximum_episode_length,
                 args.seed,
                 10000,
                 global_step,
