@@ -62,17 +62,17 @@ def parse_args():
     parser.add_argument("--target-network-frequency", type=int, default=1, # Denis Yarats' implementation delays this by 2.
         help="the frequency of updates for the target networks")
     parser.add_argument("--alpha", type=float, default=0.2,
-            help="Entropy regularization coefficient.")
+        help="Entropy regularization coefficient.")
     parser.add_argument("--autotune", type=lambda x:bool(strtobool(x)), default=True, nargs="?", const=True,
         help="automatic tuning of the entropy coefficient")
 
     # CQL specific arguments
     parser.add_argument("--cql-alpha", type=float, default=1.0,
-            help="CQL regularizer scaling coefficient.")
+        help="CQL regularizer scaling coefficient.")
     parser.add_argument("--cql-autotune", type=lambda x:bool(strtobool(x)), default=True, nargs="?", const=True,
         help="automatic tuning of the CQL regularizer coefficient")
     parser.add_argument("--cql-tau", type=float, default=10.0,
-            help="Threshold used for automatic tuning of CQL regularizer coefficient")
+        help="Threshold used for automatic tuning of CQL regularizer coefficient")
 
     # Offline training specific arguments
     parser.add_argument("--dataset-path", type=str, default="/home/chulabhaya/phd/research/data/heavenhell_1/3-23-23_heavenhell_1_sac_expert_policy_expert_data.pkl",
