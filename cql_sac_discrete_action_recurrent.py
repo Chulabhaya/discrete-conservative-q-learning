@@ -48,6 +48,8 @@ def parse_args():
         help="target smoothing coefficient (default: 0.005)")
     parser.add_argument("--batch-size", type=int, default=256,
         help="the batch size of sample from the reply memory")
+    parser.add_argument("--history-length", type=int, default=8,
+        help="maximum sequence length to sample, None means whole episodes are sampled")
     parser.add_argument("--policy-lr", type=float, default=3e-5,
         help="the learning rate of the policy network optimizer")
     parser.add_argument("--q-lr", type=float, default=3e-4,
@@ -70,7 +72,7 @@ def parse_args():
             help="Threshold used for automatic tuning of CQL regularizer coefficient")
 
     # Offline training specific arguments
-    parser.add_argument("--dataset-path", type=str, default="4-8-23_cartpole_v0_pomdp_sac_expert_policy_0_percent_random_data.pkl",
+    parser.add_argument("--dataset-path", type=str, default="/home/chulabhaya/phd/research/data/mdp_expert/4-8-23_cartpole_v0_pomdp_sac_expert_policy_0_percent_random_data.pkl",
         help="path to dataset for training")
     parser.add_argument("--num-evals", type=int, default=10,
         help="number of evaluation episodes to generate per evaluation during training")
@@ -329,7 +331,7 @@ if __name__ == "__main__":
             rewards,
             terminateds,
             seq_lengths,
-        ) = rb.sample(args.batch_size)
+        ) = rb.sample(args.batch_size, args.history_length)
         # ---------- update critic ---------- #
         # no grad because target networks are updated separately (pg. 6 of
         # updated SAC paper)
