@@ -36,9 +36,9 @@ def parse_args():
         help="whether to capture videos of the agent performances (check out `videos` folder)")
 
     # Algorithm specific arguments
-    parser.add_argument("--env-id", type=str, default="CartPole-P-v0",
+    parser.add_argument("--env-id", type=str, default="LunarLander-P-v0",
         help="the id of the environment")
-    parser.add_argument("--total-timesteps", type=int, default=100500,
+    parser.add_argument("--total-timesteps", type=int, default=500500,
         help="total timesteps of the experiments")
     parser.add_argument("--buffer-size", type=int, default=int(1e5),
         help="the replay memory buffer size")
@@ -72,7 +72,7 @@ def parse_args():
         help="Threshold used for automatic tuning of CQL regularizer coefficient")
 
     # Offline training specific arguments
-    parser.add_argument("--dataset-path", type=str, default="/home/chulabhaya/phd/research/data/mdp_expert/4-8-23_cartpole_v0_pomdp_sac_expert_policy_0_percent_random_data.pkl",
+    parser.add_argument("--dataset-path", type=str, default="/home/chulabhaya/phd/research/data/lunarlander/1_million_timesteps/mdp/5-30-23_pomdp_ll_p_hl_4_seed_103_time_1684105415_7n7zsp7m_global_step_990000_0_percent_random_data_size_1000.pkl",
         help="path to dataset for training")
     parser.add_argument("--num-evals", type=int, default=10,
         help="number of evaluation episodes to generate per evaluation during training")

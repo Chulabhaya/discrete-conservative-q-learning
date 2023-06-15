@@ -12,12 +12,9 @@ import torch.nn.functional as F
 import torch.optim as optim
 
 import wandb
-from common.models import (
-    RecurrentDiscreteActorDiscreteObs,
-    RecurrentDiscreteCriticDiscreteObs,
-)
+from common.models import RecurrentDiscreteActor, RecurrentDiscreteCritic
 from common.replay_buffer import EpisodicReplayBuffer
-from common.utils import make_env, save, set_seed
+from common.utils import make_env, set_seed, save
 
 
 def parse_args():
@@ -29,7 +26,7 @@ def parse_args():
         help="seed of the experiment")
     parser.add_argument("--cuda", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
         help="if toggled, cuda will be enabled by default")
-    parser.add_argument("--wandb-project", type=str, default="cql-sac-discrete-obs-discrete-action-recurrent",
+    parser.add_argument("--wandb-project", type=str, default="cql-sac-discrete-action-recurrent",
         help="wandb project name")
     parser.add_argument("--wandb-group", type=str, default=None,
         help="wandb group name to use for run")
@@ -39,12 +36,10 @@ def parse_args():
         help="whether to capture videos of the agent performances (check out `videos` folder)")
 
     # Algorithm specific arguments
-    parser.add_argument("--env-id", type=str, default="POMDP-heavenhell_2-episodic-v0",
+    parser.add_argument("--env-id", type=str, default="LunarLander-P-v0",
         help="the id of the environment")
     parser.add_argument("--total-timesteps", type=int, default=500500,
         help="total timesteps of the experiments")
-    parser.add_argument("--maximum-episode-length", type=int, default=100,
-        help="maximum length for episodes for gym POMDP environment")
     parser.add_argument("--buffer-size", type=int, default=int(1e5),
         help="the replay memory buffer size")
     parser.add_argument("--gamma", type=float, default=0.99,
@@ -53,6 +48,8 @@ def parse_args():
         help="target smoothing coefficient (default: 0.005)")
     parser.add_argument("--batch-size", type=int, default=256,
         help="the batch size of sample from the reply memory")
+    parser.add_argument("--history-length", type=int, default=8,
+        help="maximum sequence length to sample, None means whole episodes are sampled")
     parser.add_argument("--policy-lr", type=float, default=3e-5,
         help="the learning rate of the policy network optimizer")
     parser.add_argument("--q-lr", type=float, default=3e-4,
@@ -71,12 +68,14 @@ def parse_args():
         help="CQL regularizer scaling coefficient.")
     parser.add_argument("--cql-autotune", type=lambda x:bool(strtobool(x)), default=True, nargs="?", const=True,
         help="automatic tuning of the CQL regularizer coefficient")
-    parser.add_argument("--cql-tau", type=float, default=1.0,
+    parser.add_argument("--cql-tau", type=float, default=10.0,
         help="Threshold used for automatic tuning of CQL regularizer coefficient")
 
     # Offline training specific arguments
-    parser.add_argument("--dataset-path", type=str, default="/home/chulabhaya/phd/research/data/heavenhell_2/1_million_timesteps/mdp_pomdp/6-2-23_hh2_sac_seed_103_time_1683219637_ntw41lb1_global_step_1000000_0_percent_random_data_size_100000_pomdp.pkl",
-        help="path to dataset for training")
+    parser.add_argument("--pomdp-dataset-path", type=str, default="/home/chulabhaya/phd/research/data/lunarlander/1_million_timesteps/mdp/5-30-23_pomdp_ll_p_hl_4_seed_103_time_1684105415_7n7zsp7m_global_step_990000_0_percent_random_data_size_100000.pkl",
+        help="path to POMDP dataset for training")
+    parser.add_argument("--mdp-dataset-path", type=str, default="/home/chulabhaya/phd/research/data/lunarlander/1_million_timesteps/mdp/5-30-23_mdp_ll_f_seed_100_time_1684105026_p9no1nzr_global_step_1000000_0_percent_random_data_size_100000.pkl",
+        help="path to MDP dataset for training")
     parser.add_argument("--num-evals", type=int, default=10,
         help="number of evaluation episodes to generate per evaluation during training")
     parser.add_argument("--eval-freq", type=int, default=1000,
@@ -91,7 +90,7 @@ def parse_args():
         help="how often to save checkpoints during training (in timesteps)")
     parser.add_argument("--resume", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
         help="whether to resume training from a checkpoint")
-    parser.add_argument("--resume-checkpoint-path", type=str, default="gymnasium_seed_4_global_step_120000.pth",
+    parser.add_argument("--resume-checkpoint-path", type=str, default=None,
         help="path to checkpoint to resume training from")
     parser.add_argument("--run-id", type=str, default=None,
         help="wandb unique run id for resuming")
@@ -104,7 +103,6 @@ def parse_args():
 def eval_policy(
     actor,
     env_name,
-    maximum_episode_length,
     seed,
     seed_offset,
     global_step,
@@ -124,7 +122,6 @@ def eval_policy(
             seed + seed_offset,
             capture_video,
             run_name_full,
-            max_episode_len=maximum_episode_length,
         )
         # Track averages
         avg_episodic_return = 0
@@ -138,7 +135,9 @@ def eval_policy(
                 # Get action
                 seq_lengths = torch.LongTensor([1])
                 action, _, _, out_hidden = actor.get_actions(
-                    torch.tensor(obs).to(device).view(1, -1), seq_lengths, in_hidden
+                    torch.tensor(obs, dtype=torch.float32).to(device).view(1, 1, -1),
+                    seq_lengths,
+                    in_hidden,
                 )
                 action = action.view(-1).detach().cpu().numpy()[0]
                 in_hidden = out_hidden
@@ -192,7 +191,7 @@ if __name__ == "__main__":
             save_code=True,
             settings=wandb.Settings(code_dir="."),
             group=args.wandb_group,
-            mode="online",
+            mode="offline",
         )
 
     # Set training device
@@ -219,23 +218,17 @@ if __name__ == "__main__":
             )
 
     # Env setup
-    env = make_env(
-        args.env_id,
-        args.seed,
-        args.capture_video,
-        run_name,
-        max_episode_len=args.maximum_episode_length,
-    )
+    env = make_env(args.env_id, args.seed, args.capture_video, run_name)
     assert isinstance(
         env.action_space, gym.spaces.Discrete
     ), "only discrete action space is supported"
 
     # Initialize models and optimizers
-    actor = RecurrentDiscreteActorDiscreteObs(env).to(device)
-    qf1 = RecurrentDiscreteCriticDiscreteObs(env).to(device)
-    qf2 = RecurrentDiscreteCriticDiscreteObs(env).to(device)
-    qf1_target = RecurrentDiscreteCriticDiscreteObs(env).to(device)
-    qf2_target = RecurrentDiscreteCriticDiscreteObs(env).to(device)
+    actor = RecurrentDiscreteActor(env).to(device)
+    qf1 = RecurrentDiscreteCritic(env).to(device)
+    qf2 = RecurrentDiscreteCritic(env).to(device)
+    qf1_target = RecurrentDiscreteCritic(env).to(device)
+    qf2_target = RecurrentDiscreteCritic(env).to(device)
     qf1_target.load_state_dict(qf1.state_dict())
     qf2_target.load_state_dict(qf2.state_dict())
     q_optimizer = optim.Adam(
@@ -292,21 +285,29 @@ if __name__ == "__main__":
     else:
         cql_alpha = torch.tensor(args.cql_alpha)
 
-    # Load dataset
-    dataset = pickle.load(open(args.dataset_path, "rb"))
+    # Load datasets
+    pomdp_dataset = pickle.load(open(args.pomdp_dataset_path, "rb"))
+    mdp_dataset = pickle.load(open(args.mdp_dataset_path, "rb"))
 
-    # Initialize replay buffer
+    # Initialize replay buffers
     env.observation_space.dtype = np.float32
-    rb = EpisodicReplayBuffer(
+    pomdp_rb = EpisodicReplayBuffer(
         args.buffer_size,
         device,
     )
-    rb.load_buffer(dataset)
+    pomdp_rb.load_buffer(pomdp_dataset)
+    mdp_rb = EpisodicReplayBuffer(
+        args.buffer_size,
+        device,
+    )
+    mdp_rb.load_buffer(mdp_dataset)
 
     # If resuming training, then load previous replay buffer
     if args.resume:
-        rb_data = checkpoint["replay_buffer"]
-        rb.load_buffer(rb_data)
+        pomdp_rb_data = checkpoint["pomdp_replay_buffer"]
+        mdp_rb_data = checkpoint["mdp_replay_buffer"]
+        pomdp_rb.load_buffer(pomdp_rb_data)
+        mdp_rb.load_buffer(mdp_rb_data)
 
     # Start time tracking for run
     start_time = time.time()
@@ -332,7 +333,7 @@ if __name__ == "__main__":
         # Store values for data logging for each global step
         data_log = {}
 
-        # sample data from replay buffer
+        # sample POMDP data from replay buffer
         (
             observations,
             actions,
@@ -340,7 +341,7 @@ if __name__ == "__main__":
             rewards,
             terminateds,
             seq_lengths,
-        ) = rb.sample(args.batch_size)
+        ) = pomdp_rb.sample(args.batch_size, args.history_length)
         # ---------- update critic ---------- #
         # no grad because target networks are updated separately (pg. 6 of
         # updated SAC paper)
@@ -530,7 +531,6 @@ if __name__ == "__main__":
             eval_policy(
                 actor,
                 args.env_id,
-                args.maximum_episode_length,
                 args.seed,
                 10000,
                 global_step,
