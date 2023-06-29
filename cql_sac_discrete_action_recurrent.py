@@ -13,7 +13,7 @@ import torch.optim as optim
 
 import wandb
 from common.models import RecurrentDiscreteActor, RecurrentDiscreteCritic
-from common.replay_buffer import EpisodicReplayBuffer
+from common.replay_buffer import ReplayBuffer
 from common.utils import make_env, set_seed, save
 
 
@@ -32,8 +32,6 @@ def parse_args():
         help="wandb group name to use for run")
     parser.add_argument("--wandb-dir", type=str, default="./",
         help="the wandb directory")
-    parser.add_argument("--capture-video", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
-        help="whether to capture videos of the agent performances (check out `videos` folder)")
 
     # Algorithm specific arguments
     parser.add_argument("--env-id", type=str, default="LunarLander-P-v0",
@@ -216,7 +214,7 @@ if __name__ == "__main__":
             )
 
     # Env setup
-    env = make_env(args.env_id, args.seed, args.capture_video, run_name)
+    env = make_env(args.env_id, args.seed)
     assert isinstance(
         env.action_space, gym.spaces.Discrete
     ), "only discrete action space is supported"
@@ -288,9 +286,11 @@ if __name__ == "__main__":
 
     # Initialize replay buffer
     env.observation_space.dtype = np.float32
-    rb = EpisodicReplayBuffer(
-        args.buffer_size,
-        device,
+    rb = ReplayBuffer(
+        size=args.buffer_size,
+        episodic=True,
+        stateful=False,
+        device=device,
     )
     rb.load_buffer(dataset)
 

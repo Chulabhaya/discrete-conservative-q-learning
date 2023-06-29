@@ -32,8 +32,6 @@ def parse_args():
         help="wandb group name to use for run")
     parser.add_argument("--wandb-dir", type=str, default="./",
         help="the wandb directory")
-    parser.add_argument("--capture-video", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
-        help="whether to capture videos of the agent performances (check out `videos` folder)")
 
     # Algorithm specific arguments
     parser.add_argument("--env-id", type=str, default="POMDP-tiger-episodic-v0",
@@ -214,8 +212,6 @@ if __name__ == "__main__":
     env = make_env(
         args.env_id,
         args.seed,
-        args.capture_video,
-        run_name,
         max_episode_len=args.maximum_episode_length,
     )
     assert isinstance(
@@ -290,10 +286,10 @@ if __name__ == "__main__":
     # Initialize replay buffer
     env.observation_space.dtype = np.float32
     rb = ReplayBuffer(
-        args.buffer_size,
-        env.observation_space,
-        env.action_space,
-        device,
+        size=args.buffer_size,
+        episodic=False,
+        stateful=False,
+        device=device,
     )
     rb.load_buffer(dataset)
 
