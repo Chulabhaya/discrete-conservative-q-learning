@@ -69,11 +69,11 @@ def parse_args():
         help="CQL regularizer scaling coefficient.")
     parser.add_argument("--cql-autotune", type=lambda x:bool(strtobool(x)), default=True, nargs="?", const=True,
         help="automatic tuning of the CQL regularizer coefficient")
-    parser.add_argument("--cql-tau", type=float, default=1.0,
+    parser.add_argument("--cql-tau", type=float, default=10.0,
         help="Threshold used for automatic tuning of CQL regularizer coefficient")
 
     # Offline training specific arguments
-    parser.add_argument("--dataset-path", type=str, default="/home/chulabhaya/phd/research/data/heavenhell_2/1_million_timesteps/mdp_pomdp/6-2-23_hh2_sac_seed_103_time_1683219637_ntw41lb1_global_step_1000000_0_percent_random_data_size_100000_pomdp.pkl",
+    parser.add_argument("--dataset-path", type=str, default="/home/chulabhaya/phd/research/datasets/heavenhell_2/1_million_timesteps/mdp_pomdp/mdp_0_percent_random_data_size_100000_pomdp_0_percent_random_data_size_100000.pkl",
         help="path to dataset for training")
     parser.add_argument("--num-evals", type=int, default=10,
         help="number of evaluation episodes to generate per evaluation during training")
@@ -106,8 +106,6 @@ def eval_policy(
     seed,
     seed_offset,
     global_step,
-    capture_video,
-    run_name,
     num_evals,
     data_log,
 ):
@@ -116,12 +114,9 @@ def eval_policy(
 
     with torch.no_grad():
         # Initialization
-        run_name_full = run_name + "__eval__" + str(global_step)
         env = make_env(
             env_name,
             seed + seed_offset,
-            capture_video,
-            run_name_full,
             max_episode_len=maximum_episode_length,
         )
         # Track averages
@@ -532,8 +527,6 @@ if __name__ == "__main__":
                 args.seed,
                 10000,
                 global_step,
-                args.capture_video,
-                run_name,
                 args.num_evals,
                 data_log,
             )
