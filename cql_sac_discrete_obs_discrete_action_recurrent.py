@@ -346,9 +346,9 @@ if __name__ == "__main__":
             )
             # two Q-value estimates for reducing overestimation bias (pg. 8 of updated SAC paper)
             qf1_next_target_values = qf1_target(next_observations, seq_lengths)
-            qf1_next_target_values = qf2_target(next_observations, seq_lengths)
+            qf2_next_target_values = qf2_target(next_observations, seq_lengths)
             min_qf_next_target_values_values = torch.min(
-                qf1_next_target_values, qf1_next_target_values
+                qf1_next_target_values, qf2_next_target_values
             )
             # calculate eq. 3 in updated SAC paper
             qf_next_target_values = next_state_action_probs * (
