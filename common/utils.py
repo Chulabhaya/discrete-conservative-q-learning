@@ -113,6 +113,7 @@ def save(
         os.chmod(save_dir, 0o777)
 
     save_path = save_dir + "global_step_" + str(global_step) + ".pth"
+    print("Saving checkpoint: " + save_path, flush=True)
     torch.save(
         {
             "global_step": global_step,
