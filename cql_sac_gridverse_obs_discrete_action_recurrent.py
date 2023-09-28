@@ -63,6 +63,8 @@ def parse_args():
         help="Entropy regularization coefficient.")
     parser.add_argument("--autotune", type=lambda x:bool(strtobool(x)), default=True, nargs="?", const=True,
         help="automatic tuning of the entropy coefficient")
+    parser.add_argument("--target-entropy-scaling", type=float, default=0.3,
+        help="scaling of the target entropy value")
 
     # CQL specific arguments
     parser.add_argument("--cql-alpha", type=float, default=1.0,
@@ -262,7 +264,7 @@ if __name__ == "__main__":
 
     # Automatic entropy tuning
     if args.autotune:
-        target_entropy = -0.3 * torch.log(1 / torch.tensor(env.action_space.n))
+        target_entropy = -args.target_entropy_scaling * torch.log(1 / torch.tensor(env.action_space.n))
         if args.resume:
             log_alpha = checkpoint["model_state_dict"]["log_alpha"]
         else:
