@@ -75,7 +75,7 @@ def parse_args():
         help="Threshold used for automatic tuning of CQL regularizer coefficient")
 
     # Offline training specific arguments
-    parser.add_argument("--dataset-path", type=str, default="/home/chulabhaya/phd/research/datasets/dynamic_obstacles_7x7/pomdp/9-5-23_sac_pomdp_dynamic_obstacles_7x7_seed_100_time_1693105058_zec8wo3c_global_step_1000000_non_expert_data_size_100000.pkl",
+    parser.add_argument("--dataset-path", type=str, default="/home/chulabhaya/phd/research/datasets/dynamic_obstacles_3_7x7/pomdp/9-29-23_pomdp_dynamic_obstacles_3_7x7_100_percent_random_data_size_100000.pkl",
         help="path to dataset for training")
     parser.add_argument("--num-evals", type=int, default=10,
         help="number of evaluation episodes to generate per evaluation during training")

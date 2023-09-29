@@ -16,6 +16,7 @@ from gym_gridverse.representations.state_representations import (
     make_state_representation,
 )
 
+import simple_pomdps
 
 def make_gridverse_env(env_id, seed, max_episode_len=None, mdp=False):
     """
