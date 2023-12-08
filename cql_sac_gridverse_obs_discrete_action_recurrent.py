@@ -16,7 +16,7 @@ from common.models import (
     RecurrentDiscreteActorGridVerseObs,
     RecurrentDiscreteCriticGridVerseObs,
 )
-from common.replay_buffer import GridVerseReplayBuffer as ReplayBuffer
+from common.replay_buffer import GridVerseOfflineReplayBuffer as ReplayBuffer
 from common.utils import make_gridverse_env, save, set_seed
 
 
@@ -41,10 +41,8 @@ def parse_args():
         help="the id of the environment")
     parser.add_argument("--total-timesteps", type=int, default=1000500,
         help="total timesteps of the experiments")
-    parser.add_argument("--maximum-episode-length", type=int, default=100,
+    parser.add_argument("--maximum-episode-length", type=int, default=200,
         help="maximum length for episodes for gym POMDP environment")
-    parser.add_argument("--buffer-size", type=int, default=int(1e5),
-        help="the replay memory buffer size")
     parser.add_argument("--gamma", type=float, default=0.99,
         help="the discount factor gamma")
     parser.add_argument("--tau", type=float, default=0.005,
@@ -75,7 +73,7 @@ def parse_args():
         help="Threshold used for automatic tuning of CQL regularizer coefficient")
 
     # Offline training specific arguments
-    parser.add_argument("--dataset-path", type=str, default="/home/chulabhaya/phd/research/datasets/dynamic_obstacles_3_7x7/pomdp/9-29-23_pomdp_dynamic_obstacles_3_7x7_100_percent_random_data_size_100000.pkl",
+    parser.add_argument("--dataset-path", type=str, default="12-2-23_gv_dynamic_obstacles_3_7x7_100_percent_random_size_1000.hdf5",
         help="path to dataset for training")
     parser.add_argument("--num-evals", type=int, default=10,
         help="number of evaluation episodes to generate per evaluation during training")
@@ -295,23 +293,11 @@ if __name__ == "__main__":
     else:
         cql_alpha = torch.tensor(args.cql_alpha)
 
-    # Load dataset
-    dataset = pickle.load(open(args.dataset_path, "rb"))
-
     # Initialize replay buffer
-    env.observation_space.dtype = np.float32
     rb = ReplayBuffer(
-        size=args.buffer_size,
-        episodic=True,
-        stateful=False,
+        dataset_path=args.dataset_path,
         device=device,
     )
-    rb.load_buffer(dataset)
-
-    # If resuming training, then load previous replay buffer
-    if args.resume:
-        rb_data = checkpoint["replay_buffer"]
-        rb.load_buffer(rb_data)
 
     # Start time tracking for run
     start_time = time.time()
@@ -568,8 +554,7 @@ if __name__ == "__main__":
                 if args.cql_autotune:
                     optimizers["cql_a_optimizer"] = cql_a_optimizer.state_dict()
                     models["cql_log_alpha"] = cql_log_alpha
-                # Save replay buffer
-                rb_data = rb.save_buffer()
+
                 # Save random states, important for reproducibility
                 rng_states = {
                     "random_rng_state": random.getstate(),
@@ -591,7 +576,6 @@ if __name__ == "__main__":
                     global_step,
                     models,
                     optimizers,
-                    rb_data,
                     rng_states,
                 )
 

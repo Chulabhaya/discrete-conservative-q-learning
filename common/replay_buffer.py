@@ -2,6 +2,7 @@ import torch
 import numpy as np
 from torch.nn.utils.rnn import pad_sequence
 from collections import deque
+import h5py
 
 
 class ReplayBuffer:
@@ -431,6 +432,7 @@ class GridVerseReplayBuffer:
         stateful=False,
         mdp=False,
         device="cpu",
+        size_episodes=False,
     ):
         """
         Initialize replay buffer.
@@ -444,6 +446,7 @@ class GridVerseReplayBuffer:
         """
         # Set size of buffer
         self._buffer_size = size
+        self._size_episodes = size_episodes
 
         # Set type of buffer
         self._episodic = episodic
@@ -497,6 +500,8 @@ class GridVerseReplayBuffer:
 
         # Track number of timesteps stored in buffer
         self._timesteps_in_buffer = 0
+        if self._size_episodes:
+            self._episodes_in_buffer = 0
 
         # Set device on which to return samples from buffer
         self._device = device
@@ -643,6 +648,8 @@ class GridVerseReplayBuffer:
 
                 # Update buffer size tracking
                 self._timesteps_in_buffer += len(self._ongoing_obs_grid)
+                if self._size_episodes:
+                    self._episodes_in_buffer += 1
 
                 # Reset on-going episode tracking
                 self._ongoing_obs_grid = deque()
@@ -689,30 +696,53 @@ class GridVerseReplayBuffer:
 
         # Ensure that buffer size isn't over the limit
         # by removing the earliest episodes/samples in the buffer
-        while self._timesteps_in_buffer > self._buffer_size:
-            removed_obs = self._obs_grid.popleft()
-            self._obs_agent_id_grid.popleft()
-            self._actions.popleft()
-            self._next_obs_grid.popleft()
-            self._next_obs_agent_id_grid.popleft()
-            if self._mdp:
-                self._obs_agent.popleft()
-                self._next_obs_agent.popleft()
-            self._rewards.popleft()
-            self._terminateds.popleft()
-            self._truncateds.popleft()
-            if self._stateful:
-                self._states_grid.popleft()
-                self._states_agent_id_grid.popleft()
-                self._states_agent.popleft()
-                self._next_states_grid.popleft()
-                self._next_states_agent_id_grid.popleft()
-                self._next_states_agent.popleft()
+        if self._size_episodes:
+            while self._episodes_in_buffer > self._buffer_size:
+                removed_obs = self._obs_grid.popleft()
+                self._obs_agent_id_grid.popleft()
+                self._actions.popleft()
+                self._next_obs_grid.popleft()
+                self._next_obs_agent_id_grid.popleft()
+                if self._mdp:
+                    self._obs_agent.popleft()
+                    self._next_obs_agent.popleft()
+                self._rewards.popleft()
+                self._terminateds.popleft()
+                self._truncateds.popleft()
+                if self._stateful:
+                    self._states_grid.popleft()
+                    self._states_agent_id_grid.popleft()
+                    self._states_agent.popleft()
+                    self._next_states_grid.popleft()
+                    self._next_states_agent_id_grid.popleft()
+                    self._next_states_agent.popleft()
 
-            if self._episodic:
-                self._timesteps_in_buffer -= len(removed_obs)
-            else:
-                self._timesteps_in_buffer -= 1
+                self._episodes_in_buffer -= 1
+        else:
+            while self._timesteps_in_buffer > self._buffer_size:
+                removed_obs = self._obs_grid.popleft()
+                self._obs_agent_id_grid.popleft()
+                self._actions.popleft()
+                self._next_obs_grid.popleft()
+                self._next_obs_agent_id_grid.popleft()
+                if self._mdp:
+                    self._obs_agent.popleft()
+                    self._next_obs_agent.popleft()
+                self._rewards.popleft()
+                self._terminateds.popleft()
+                self._truncateds.popleft()
+                if self._stateful:
+                    self._states_grid.popleft()
+                    self._states_agent_id_grid.popleft()
+                    self._states_agent.popleft()
+                    self._next_states_grid.popleft()
+                    self._next_states_agent_id_grid.popleft()
+                    self._next_states_agent.popleft()
+
+                if self._episodic:
+                    self._timesteps_in_buffer -= len(removed_obs)
+                else:
+                    self._timesteps_in_buffer -= 1
 
     def sample(self, batch_size=256, history_length=None):
         """
@@ -1152,3 +1182,129 @@ class GridVerseReplayBuffer:
                     batch_rewards,
                     batch_terminateds,
                 )
+
+
+class GridVerseOfflineReplayBuffer:
+    """Offline replay buffer for GridVerse datasets."""
+
+    def __init__(
+        self,
+        dataset_path,
+        device="cpu",
+        return_state=False,
+    ):
+        """
+        Initialize replay buffer.
+
+        Args:
+            dataset_path: Path to HDF5 dataset.
+            device: What device to return buffer samples on.
+        """
+        # Load dataset from path
+        self._dataset_raw = h5py.File(dataset_path, "r")
+        self._dataset = {}
+        for key in self._dataset_raw.keys():
+            if key == "states_agent" or key == "next_states_agent":
+                self._dataset[key] = torch.tensor(
+                    self._dataset_raw[key][:], dtype=torch.float32
+                )
+            elif key == "actions" or key == "rewards" or key == "terminateds":
+                self._dataset[key] = torch.unsqueeze(
+                    torch.tensor(self._dataset_raw[key][:]), 2
+                )
+            else:
+                self._dataset[key] = torch.tensor(self._dataset_raw[key][:])
+
+        # Set device on which to return samples from buffer
+        self._device = device
+
+        # Whether to return state data from dataset or not
+        self._return_state = return_state
+
+    def sample(self, batch_size=256, history_length=None):
+        """
+        Sample batch of episodes/samples from replay buffer.
+
+        Args:
+            batch_size: Size of batch to sample from buffer.
+            history_length: Sequence length to sample if using
+                episodic buffer; if None then full episode will
+                be sampled.
+
+        Returns:
+            Batch of tensors of samples/episodes.
+        """
+        # Generate indices for random samples/episodes
+        upper_bound = self._dataset["seq_lengths"].shape[0]
+        batch_inds = np.random.randint(0, upper_bound, size=batch_size)
+
+        # Create padded arrays of history
+        seq_lengths = self._dataset["seq_lengths"][batch_inds, ...]
+        max_seq_length = torch.max(seq_lengths)
+        batch_obs = {
+            "grid": self._dataset["obs_grid"][0:max_seq_length, batch_inds, ...].to(
+                self._device
+            ),
+            "agent_id_grid": self._dataset["obs_agent_id_grid"][
+                0:max_seq_length, batch_inds, ...
+            ].to(self._device),
+        }
+        batch_actions = self._dataset["actions"][0:max_seq_length, batch_inds, ...].to(
+            self._device
+        )
+        batch_next_obs = {
+            "grid": self._dataset["next_obs_grid"][
+                0:max_seq_length, batch_inds, ...
+            ].to(self._device),
+            "agent_id_grid": self._dataset["next_obs_agent_id_grid"][
+                0:max_seq_length, batch_inds, ...
+            ].to(self._device),
+        }
+        batch_rewards = self._dataset["rewards"][0:max_seq_length, batch_inds, ...].to(
+            self._device
+        )
+        batch_terminateds = self._dataset["terminateds"][
+            0:max_seq_length, batch_inds, ...
+        ].to(self._device)
+        if self._return_state:
+            batch_states = {
+                "grid": self._dataset["states_grid"][0:max_seq_length, batch_inds, ...].to(
+                    self._device
+                ),
+                "agent_id_grid": self._dataset["states_agent_id_grid"][
+                    0:max_seq_length, batch_inds, ...
+                ].to(self._device),
+                "agent": self._dataset["states_agent"][
+                    0:max_seq_length, batch_inds, ...
+                ].to(self._device),
+            }
+            batch_next_states = {
+                "grid": self._dataset["next_states_grid"][
+                    0:max_seq_length, batch_inds, ...
+                ].to(self._device),
+                "agent_id_grid": self._dataset["next_states_agent_id_grid"][
+                    0:max_seq_length, batch_inds, ...
+                ].to(self._device),
+                "agent": self._dataset["next_states_agent"][
+                    0:max_seq_length, batch_inds, ...
+                ].to(self._device),
+            }
+            return (
+                batch_obs,
+                batch_actions,
+                batch_next_obs,
+                batch_rewards,
+                batch_terminateds,
+                batch_states,
+                batch_next_states,
+                seq_lengths,
+            )
+        else:
+            return (
+                batch_obs,
+                batch_actions,
+                batch_next_obs,
+                batch_rewards,
+                batch_terminateds,
+                seq_lengths,
+            )
