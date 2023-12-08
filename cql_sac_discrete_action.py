@@ -490,8 +490,6 @@ if __name__ == "__main__":
                 if args.cql_autotune:
                     optimizers["cql_a_optimizer"] = cql_a_optimizer.state_dict()
                     models["cql_log_alpha"] = cql_log_alpha
-                # Save replay buffer
-                rb_data = rb.save_buffer()
                 # Save random states, important for reproducibility
                 rng_states = {
                     "random_rng_state": random.getstate(),
@@ -513,7 +511,6 @@ if __name__ == "__main__":
                     global_step,
                     models,
                     optimizers,
-                    rb_data,
                     rng_states,
                 )
 
