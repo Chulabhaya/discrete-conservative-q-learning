@@ -279,11 +279,6 @@ if __name__ == "__main__":
     )
     rb.load_buffer(dataset)
 
-    # If resuming training, then load previous replay buffer
-    if args.resume:
-        rb_data = checkpoint["replay_buffer"]
-        rb.load_buffer(rb_data)
-
     # Start time tracking for run
     start_time = time.time()
 
